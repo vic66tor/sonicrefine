@@ -1,0 +1,100 @@
+name: Build Desktop App
+
+on:
+  push:
+    tags:
+      - 'v*'  # Триггер на теги v1.0.0, v1.0.1, etc.
+  workflow_dispatch:  # Ручной запуск из GitHub UI
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./desktop
+        run: npm ci
+
+      - name: Build Electron app
+        working-directory: ./desktop
+        run: npm run dist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Setup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SonicRefine-Windows-Setup
+          path: desktop/release/*.exe
+          retention-days: 30
+
+      - name: Upload Portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SonicRefine-Windows-Portable
+          path: desktop/release/*-Portable-*.exe
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # Создание релиза при пуше тега
+  release:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List files
+        run: find artifacts -type f -name "*.exe"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: SonicRefine ${{ github.ref_name }}
+          body: |
+            ## 🎵 SonicRefine Desktop ${{ github.ref_name }}
+            
+            AI-powered audio enhancement for Windows.
+            
+            ### Downloads
+            - **SonicRefine-Setup-*.exe** — Installer (recommended)
+            - **SonicRefine-Portable-*.exe** — Portable version (no installation)
+            
+            ### What's included
+            - 🎛️ Input normalization
+            - 🔇 Noise reduction (optional)
+            - 🎚️ EQ correction
+            - 🔊 Multiband compression
+            - 🎧 Stereo enhancement
+            - 📊 Loudness normalization (-14 LUFS)
+            - 📦 Export to MP3, WAV, FLAC, AAC
+            
+            ### System Requirements
+            - Windows 10/11 (64-bit)
+            - 4 GB RAM minimum
+            
+            ---
+            ⚡ *Perceptual enhancement — optimizes audio characteristics*
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/**/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

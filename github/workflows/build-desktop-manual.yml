@@ -1,0 +1,114 @@
+name: Build Desktop (Manual)
+
+# Этот workflow можно запустить вручную без создания тега
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 1.0.0)'
+        required: true
+        default: '1.0.0'
+      create_release:
+        description: 'Create GitHub Release?'
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Update version
+        working-directory: ./desktop
+        run: |
+          $json = Get-Content package.json | ConvertFrom-Json
+          $json.version = "${{ github.event.inputs.version }}"
+          $json | ConvertTo-Json -Depth 10 | Set-Content package.json
+        shell: pwsh
+
+      - name: Create icon
+        working-directory: ./desktop/assets
+        run: |
+          npm install -g svg2png-cli
+          npx svg2png-cli icon.svg -o icon.png -w 256 -h 256
+        shell: pwsh
+        continue-on-error: true
+
+      - name: Install dependencies
+        working-directory: ./desktop
+        run: npm install
+
+      - name: Build Electron app
+        working-directory: ./desktop
+        run: npm run dist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: List built files
+        working-directory: ./desktop/release
+        run: dir
+        shell: cmd
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SonicRefine-Windows-v${{ github.event.inputs.version }}
+          path: |
+            desktop/release/*.exe
+            !desktop/release/*-unpacked/
+          retention-days: 30
+
+  release:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.create_release == 'true' }}
+    
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: SonicRefine-Windows-v${{ github.event.inputs.version }}
+          path: release
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ github.event.inputs.version }}
+          name: SonicRefine v${{ github.event.inputs.version }}
+          body: |
+            ## 🎵 SonicRefine Desktop v${{ github.event.inputs.version }}
+            
+            AI-powered audio enhancement for Windows.
+            
+            ### 📥 Downloads
+            | File | Description |
+            |:-----|:------------|
+            | `SonicRefine-Setup-${{ github.event.inputs.version }}.exe` | Windows Installer |
+            | `SonicRefine-Portable-${{ github.event.inputs.version }}.exe` | Portable (no install) |
+            
+            ### ✨ Features
+            - Drag & drop audio files
+            - Real-time processing with FFmpeg
+            - Export to MP3, WAV, FLAC, AAC
+            - Works offline
+            
+            ### 💻 Requirements
+            - Windows 10/11 (64-bit)
+            - 4 GB RAM
+          draft: false
+          prerelease: false
+          files: release/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
