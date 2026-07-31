@@ -1,1 +1,90 @@
+name: Build Desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version'
+        required: true
+        default: '1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: desktop
+        run: npm install --legacy-peer-deps
+
+      - name: Install esbuild
+        working-directory: desktop
+        run: npm install --save-dev esbuild --legacy-peer-deps
+
+      - name: Build renderer (React UI)
+        working-directory: desktop
+        run: npx vite build
+
+      - name: Build main process
+        working-directory: desktop
+        shell: bash
+        run: |
+          npx esbuild src/main/main.ts --bundle --platform=node --target=node18 --external:electron --external:better-sqlite3 --external:@ffmpeg-installer/ffmpeg --external:fluent-ffmpeg --external:music-metadata --outfile=dist/main/main.js
+          npx esbuild src/main/preload.ts --bundle --platform=node --target=node18 --external:electron --outfile=dist/main/preload.js
+
+      - name: Remove missing icon references
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          if ($pkg.build.win.PSObject.Properties.Name -contains "icon") {
+            $pkg.build.win.PSObject.Properties.Remove("icon")
+          }
+          foreach ($k in @("installerIcon","uninstallerIcon","installerHeaderIcon")) {
+            if ($pkg.build.nsis.PSObject.Properties.Name -contains $k) {
+              $pkg.build.nsis.PSObject.Properties.Remove($k)
+            }
+          }
+          $pkg | ConvertTo-Json -Depth 20 | Set-Content package.json -Encoding UTF8
+
+      - name: Package Windows exe
+        working-directory: desktop
+        run: npx electron-builder --win --x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: List built files
+        shell: bash
+        run: ls -la desktop/release/ || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SonicRefine-Windows
+          path: desktop/release/*.exe
+          if-no-files-found: warn
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.event.inputs.version }}
+          name: SonicRefine v${{ github.event.inputs.version }}
+          body: |
+            ## SonicRefine v${{ github.event.inputs.version }}
+
+            100% Free - Offline - No limits - MIT License
+
+            - SonicRefine-Setup — installer
+            - SonicRefine-Portable — no-install build
+          files: desktop/release/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
